@@ -4,6 +4,7 @@ go 1.25.5
 
 require (
 	github.com/charmbracelet/huh v0.8.0
+	github.com/joho/godotenv v1.5.1
 	github.com/kkdai/youtube/v2 v2.10.5
 )
 
