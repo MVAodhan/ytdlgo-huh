@@ -4,9 +4,13 @@ go 1.25.5
 
 require (
 	github.com/charmbracelet/huh v0.8.0
+	github.com/ggerganov/whisper.cpp/bindings/go/pkg/whisper v0.0.0
 	github.com/joho/godotenv v1.5.1
 	github.com/kkdai/youtube/v2 v2.10.5
 )
+
+replace github.com/ggerganov/whisper.cpp/bindings/go/pkg/whisper => ./whisper.cpp/bindings/go/pkg/whisper
+replace github.com/ggerganov/whisper.cpp/bindings/go => ./whisper.cpp/bindings/go
 
 require (
 	github.com/atotto/clipboard v0.1.4 // indirect

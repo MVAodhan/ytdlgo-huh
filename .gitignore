@@ -1,3 +1,36 @@
+# Environment variables
 .env
+
+# Personal snippets
 snippets.txt
+
+# macOS
 .DS_Store
+
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Downloaded videos and audio files
+*.mp4
+*.mp3
+*.wav
+
+# Generated transcripts
+*_transcript.txt
+
+# Whisper.cpp build artifacts
+whisper.cpp/build/
+whisper.cpp/build_go/
+whisper.cpp/bindings/go/build_go/
+whisper.cpp/bindings/go/models/
+
+# Whisper models (large files - should not be committed)
+whisper.cpp/models/*.bin
+
+# IDE
+.vscode/
+.idea/

@@ -1,29 +1,24 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
-	"mime/multipart"
-	"net/http"
 	"os"
 	"os/exec"
 	"strings"
 
 	"github.com/charmbracelet/huh"
-	_ "github.com/joho/godotenv"
 	"github.com/kkdai/youtube/v2"
 )
 
 var (
 	videoID	string
-	groqAPI string
 	choices	[]string
 	videoFileName string
 	filePath string
 	wavFileName string
+	selectedModel string
 )
 
 type TranscriptionResponse struct {
@@ -35,27 +30,13 @@ type TranscriptionResponse struct {
 
 func main() {	
 
-	
-
-
-
-// 	err := godotenv.Load()
-//   if err != nil {
-//     log.Fatal("Error loading .env file")
-//   }
-//   groqAPI = os.Getenv("GROQ_API")
-
-//   if groqAPI == "" {
-// 		log.Fatal("GROQ_API_KEY environment variable is not set")
-// 	}
-// 	transcribeAuidio(fmt.Sprintf("./%s",wavFileName))
-
 huh.NewMultiSelect[string]().
     Options(
         huh.NewOption("Extract Video", "video"),
         huh.NewOption("Extract audio", "audio"),
+        huh.NewOption("Transcribe audio", "transcribe"),
     ).
-    Title("What actions would you like to take ").
+    Title("What actions would you like to take?").
     Value(&choices).
     Run()
 
@@ -66,9 +47,32 @@ for _, choice := range choices{
 		videoFileName = extractVideo(videoID)
 	case "audio":
 		if videoFileName == ""{
-			huh.NewFilePicker().CurrentDirectory("./").Picking(true).Height(50).ShowPermissions(false).AllowedTypes([]string{"mp4"}).Value(&filePath).Title("Select a video file to convert to an mp3").Run()
-			wavFileName = strings.Replace(filePath, "mp4", "mp3", 1)
+			huh.NewFilePicker().CurrentDirectory("./").Picking(true).Height(50).ShowPermissions(false).AllowedTypes([]string{"mp4"}).Value(&filePath).Title("Select a video file to convert to WAV").Run()
+			wavFileName = strings.Replace(filePath, ".mp4", ".wav", 1)
 			convertToWav(filePath, wavFileName)
+		} else {
+			wavFileName = strings.Replace(videoFileName, ".mp4", ".wav", 1)
+			convertToWav(videoFileName, wavFileName)
+		}
+	case "transcribe":
+		// Get available models
+		modelOptions, err := getAvailableModels()
+		if err != nil {
+			log.Printf("Error getting models: %v", err)
+			return
+		}
+		
+		// Select model
+		huh.NewSelect[string]().
+			Title("Select a Whisper model").
+			Description("Larger models are more accurate but slower").
+			Options(modelOptions...).
+			Value(&selectedModel).
+			Run()
+		
+		err = transcribeWithWhisper()
+		if err != nil {
+			log.Printf("Transcription failed: %v", err)
 		}
 	}
 }
@@ -104,13 +108,14 @@ func extractVideo(videoID string) string {
 	return fileName
 }
 
-func convertToWav(inputPath, outDir string) {
+func convertToWav(inputPath, outputPath string) {
 	cmd := exec.Command("ffmpeg",
-	"-y",
-	"-i", inputPath,
-	"-ac", "1",
-	"-ar", "16000",
-		outDir,
+		"-y",
+		"-i", inputPath,
+		"-ar", "16000",
+		"-ac", "1",
+		"-c:a", "pcm_s16le",
+		outputPath,
 	)
 
 	err := cmd.Run()
@@ -119,79 +124,91 @@ func convertToWav(inputPath, outDir string) {
 	}
 }
 
-func transcribeAuidio(audioFileLocation string) error {
-    // Create a buffer to write our multipart form data
-   
-
-   file, err := os.Open(audioFileLocation)
+// getAvailableModels scans the models directory and returns available whisper models
+func getAvailableModels() ([]huh.Option[string], error) {
+	modelsDir := "whisper.cpp/models"
+	entries, err := os.ReadDir(modelsDir)
 	if err != nil {
-		log.Fatalf("Failed to open audio file: %v", err)
+		return nil, fmt.Errorf("failed to read models directory: %v", err)
 	}
-	defer file.Close()
+	
+	var modelOptions []huh.Option[string]
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasPrefix(entry.Name(), "ggml-") && strings.HasSuffix(entry.Name(), ".bin") {
+			// Extract model name (e.g., "ggml-tiny.en.bin" -> "tiny.en")
+			modelName := strings.TrimPrefix(entry.Name(), "ggml-")
+			modelName = strings.TrimSuffix(modelName, ".bin")
+			
+			// Get file size for display
+			info, _ := entry.Info()
+			sizeStr := fmt.Sprintf("%.1f MB", float64(info.Size())/(1024*1024))
+			
+			displayName := fmt.Sprintf("%s (%s)", modelName, sizeStr)
+			fullPath := fmt.Sprintf("%s/%s", modelsDir, entry.Name())
+			
+			modelOptions = append(modelOptions, huh.NewOption(displayName, fullPath))
+		}
+	}
+	
+	if len(modelOptions) == 0 {
+		return nil, fmt.Errorf("no whisper models found in %s", modelsDir)
+	}
+	
+	return modelOptions, nil
+}
 
-	// Create a buffer to write our multipart form data
-	var requestBody bytes.Buffer
-	writer := multipart.NewWriter(&requestBody)
-
-	// Add the file field
-	filePart, err := writer.CreateFormFile("file", "audio.m4a")
+// transcribeWithWhisper uses whisper.cpp to transcribe audio locally
+func transcribeWithWhisper() error {
+	// Select audio file if not already selected
+	var audioPath string
+	if wavFileName != "" {
+		audioPath = wavFileName
+	} else {
+		huh.NewFilePicker().
+			CurrentDirectory("./").
+			Picking(true).
+			Height(50).
+			ShowPermissions(false).
+			AllowedTypes([]string{"mp3", "wav"}).
+			Value(&audioPath).
+			Title("Select an audio file to transcribe").
+			Run()
+	}
+	
+	// Convert to WAV format if needed (whisper requires WAV)
+	wavPath := audioPath
+	if strings.HasSuffix(audioPath, ".mp3") || strings.HasSuffix(audioPath, ".mp4") {
+		// Determine output extension
+		ext := ".mp3"
+		if strings.HasSuffix(audioPath, ".mp4") {
+			ext = ".mp4"
+		}
+		wavPath = strings.Replace(audioPath, ext, ".wav", 1)
+		log.Printf("Converting %s to WAV format...", audioPath)
+		convertToWav(audioPath, wavPath)
+	}
+	
+	log.Printf("Transcribing %s with model %s...", wavPath, selectedModel)
+	
+	// Call whisper binary with selected model
+	cmd := exec.Command("./whisper.cpp/bindings/go/build_go/go-whisper", 
+		"-model", selectedModel, 
+		wavPath)
+	
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Fatalf("Failed to create form file: %v", err)
+		return fmt.Errorf("whisper transcription failed: %v\nOutput: %s", err, string(output))
 	}
-	_, err = io.Copy(filePart, file)
-	if err != nil {
-		log.Fatalf("Failed to copy file content: %v", err)
+	
+	// Save transcription to text file
+	transcriptFile := strings.Replace(wavPath, ".wav", "_transcript.txt", 1)
+	if err := os.WriteFile(transcriptFile, output, 0644); err != nil {
+		return fmt.Errorf("failed to save transcript: %v", err)
 	}
-
-	// Add other form fields
-	writer.WriteField("model", "whisper-large-v3-turbo")
-	writer.WriteField("temperature", "0")
-	writer.WriteField("response_format", "verbose_json")
-
-	// Close the writer to finalize the multipart message
-	err = writer.Close()
-	if err != nil {
-		log.Fatalf("Failed to close writer: %v", err)
-	}
-
-	// Create the HTTP request
-	req, err := http.NewRequest("POST", "https://api.groq.com/openai/v1/audio/transcriptions", &requestBody)
-	if err != nil {
-		log.Fatalf("Failed to create request: %v", err)
-	}
-
-	// Set headers
-	req.Header.Set("Authorization", "Bearer "+groqAPI)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-
-	// Send the request
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Fatalf("Request failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	// Read the response
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatalf("Failed to read response: %v", err)
-	}
-
-	// Check for errors
-	if resp.StatusCode != http.StatusOK {
-		log.Fatalf("API request failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	// Parse the JSON response
-	var transcription TranscriptionResponse
-	err = json.Unmarshal(body, &transcription)
-	if err != nil {
-		log.Fatalf("Failed to parse response: %v", err)
-	}
-
-	// Print the transcription text
-	fmt.Println(transcription.Text)
-
-    return nil
+	
+	fmt.Println("\n=== Transcription ===")
+	fmt.Println(string(output))
+	fmt.Printf("\n✓ Transcript saved to: %s\n", transcriptFile)
+	
+	return nil
 }
