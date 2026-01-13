@@ -200,15 +200,22 @@ func transcribeWithWhisper() error {
 		return fmt.Errorf("whisper transcription failed: %v\nOutput: %s", err, string(output))
 	}
 	
+	// Filter out logs and keep only the actual transcription
+	lines := strings.Split(string(output), "\n")
+	var transcriptLines []string
+	for _, line := range lines {
+		// Keep lines that start with timestamp markers like "[0s->6.88s]"
+		if strings.HasPrefix(strings.TrimSpace(line), "[") {
+			transcriptLines = append(transcriptLines, line)
+		}
+	}
+	cleanedOutput := strings.Join(transcriptLines, "\n")
+	
 	// Save transcription to text file
 	transcriptFile := strings.Replace(wavPath, ".wav", "_transcript.txt", 1)
-	if err := os.WriteFile(transcriptFile, output, 0644); err != nil {
+	if err := os.WriteFile(transcriptFile, []byte(cleanedOutput), 0644); err != nil {
 		return fmt.Errorf("failed to save transcript: %v", err)
 	}
-	
-	fmt.Println("\n=== Transcription ===")
-	fmt.Println(string(output))
-	fmt.Printf("\n✓ Transcript saved to: %s\n", transcriptFile)
 	
 	return nil
 }
